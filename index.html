@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <!-- A brief description of your app -->
+  <meta name="description" content="A stopwatch with a live clock and switchable design themes for Meta Ray-Ban Display glasses.">
+  <!-- Identify your web app as MRBD-compatible -->
+  <meta name="mrbd-web-app-capable" content="yes">
+  <meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no">
+  <link rel="icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==">
+  <title>Stopwatch</title>
+  <style>
+    /* ---- Base (glasses require: 600x600, no scroll, black = transparent) ---- */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 600px;
+      height: 600px;
+      overflow: hidden;
+      background: #000;              /* black disappears on the additive display */
+      color: var(--fg, #ffffff);
+      font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+      user-select: none;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ---- Theme variables ---- */
+    body {
+      --fg: #ffffff;
+      --dim: #7d8794;
+      --accent: #00d4ff;
+      --accent2: #00d4ff;
+      --sw-font: -apple-system, "Segoe UI", Roboto, sans-serif;
+      --sw-weight: 200;
+      --sw-glow: none;
+      --btn-radius: 16px;
+    }
+    body[data-theme="fun"] {
+      --fg: #fff7ed;
+      --dim: #fca5a5;
+      --accent: #ffd23f;
+      --accent2: #ff5da2;
+      --sw-font: "Trebuchet MS", "Segoe UI", sans-serif;
+      --sw-weight: 800;
+      --sw-glow: 0 0 24px rgba(255,93,162,0.45);
+      --btn-radius: 28px;
+    }
+    body[data-theme="neon"] {
+      --fg: #eafcff;
+      --dim: #5f7d86;
+      --accent: #00f0ff;
+      --accent2: #ff2ec4;
+      --sw-font: "Segoe UI", sans-serif;
+      --sw-weight: 400;
+      --sw-glow: 0 0 12px rgba(0,240,255,0.9), 0 0 34px rgba(255,46,196,0.5);
+      --btn-radius: 12px;
+    }
+    body[data-theme="retro"] {
+      --fg: #ffb347;
+      --dim: #6b5a2e;
+      --accent: #7CFC00;
+      --accent2: #ffb347;
+      --sw-font: "Courier New", monospace;
+      --sw-weight: 700;
+      --sw-glow: 0 0 10px rgba(255,179,71,0.75);
+      --btn-radius: 6px;
+    }
+    body[data-theme="pocket"] {
+      --fg: #f7e7c4;
+      --dim: #9c8557;
+      --accent: #e8c86a;
+      --accent2: #f0d98a;
+      --sw-font: Georgia, "Times New Roman", serif;
+      --sw-weight: 600;
+      --sw-glow: 0 0 14px rgba(232,200,106,0.5);
+      --btn-radius: 20px;
+    }
+
+    /* ---- Screens ---- */
+    .screen {
+      position: absolute;
+      inset: 0;
+      z-index: 1;                    /* sit above the background canvas */
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px;
+    }
+    .hidden { display: none !important; }
+
+    /* ---- Background effects canvas (used by Neon) ---- */
+    #bgfx { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+
+    /* ---- Subtle per-theme backdrops (kept dark for glasses readability) ---- */
+    body[data-theme="retro"] .screen {
+      background: #000 url('retro-frame.png') center / cover no-repeat;
+    }
+    /* keep controls legible where they sit over the glowing grille */
+    body[data-theme="retro"] .row {
+      background: rgba(0,0,0,0.5);
+      border-radius: 18px;
+      padding: 6px 4px;
+    }
+    body[data-theme="retro"] #clock {
+      background: rgba(0,0,0,0.62); padding: 3px 16px; border-radius: 14px;
+    }
+    body[data-theme="retro"] #date { display: none; }
+    body[data-theme="fun"] .screen {
+      background:
+        radial-gradient(circle at 18% 18%, rgba(255,93,162,0.12), transparent 42%),
+        radial-gradient(circle at 82% 80%, rgba(255,210,63,0.12), transparent 42%);
+    }
+
+    /* ---- Live clock ---- */
+    #clock {
+      font-size: 34px;
+      letter-spacing: 2px;
+      color: var(--accent);
+      text-shadow: var(--sw-glow);
+      margin-top: 4px;
+      font-variant-numeric: tabular-nums;
+    }
+    #clock .colon { animation: blink 1s steps(1) infinite; }
+    @keyframes blink { 50% { opacity: 0.25; } }
+    #date { font-size: 18px; color: var(--dim); margin-top: 2px; letter-spacing: 1px; }
+
+    /* ---- Stopwatch display ---- */
+    #swWrap {
+      position: relative;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+    }
+    /* Pocket-watch circular bezel (only shown in Pocket theme) */
+    #watchRing {
+      display: none;
+      position: absolute;
+      left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      width: 400px; height: 400px;
+      border-radius: 50%;
+      border: 6px solid var(--accent);
+      box-shadow: 0 0 30px rgba(232,200,106,0.35), inset 0 0 34px rgba(232,200,106,0.16);
+      z-index: 0;
+    }
+    /* Pocket theme uses the analog dial below instead of the plain ring */
+    #analog { display: none; width: 300px; height: 300px; }
+    body[data-theme="pocket"] #analog { display: block; }
+    body[data-theme="pocket"] #stopwatch { display: none; }
+    #stopwatch {
+      font-family: var(--sw-font);
+      font-weight: var(--sw-weight);
+      font-size: 92px;
+      line-height: 1;
+      color: var(--fg);
+      text-shadow: var(--sw-glow);
+      display: inline-flex;
+      align-items: baseline;
+      justify-content: center;
+      font-variant-numeric: tabular-nums;
+      font-feature-settings: "tnum" 1;
+    }
+    /* fixed-width figures + a reserved slot for the hundredths so nothing shifts */
+    #stopwatch .main { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+    #stopwatch .ms {
+      font-size: 64px; color: var(--accent2);
+      width: 120px; text-align: left;
+      font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1;
+    }
+    body.running #stopwatch { animation: pulse 1s ease-in-out infinite; }
+    @keyframes pulse { 50% { text-shadow: 0 0 30px var(--accent2); } }
+
+    /* ---- Lap list ---- */
+    #laps {
+      height: 96px;
+      width: 100%;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 6px;
+    }
+    .lap {
+      display: flex;
+      justify-content: space-between;
+      font-size: 20px;
+      color: var(--dim);
+      padding: 0 40px;
+      animation: slideIn 250ms ease;
+    }
+    .lap b { color: var(--accent); }
+    @keyframes slideIn { from { opacity: 0; transform: translateY(-8px); } }
+
+    /* ---- Buttons ---- */
+    .row { display: flex; gap: 16px; width: 100%; justify-content: center; }
+    .btn {
+      min-height: 88px;              /* glasses minimum tap target */
+      min-width: 120px;
+      padding: 0 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      font-size: 26px;
+      font-weight: 600;
+      color: var(--fg);
+      background: rgba(255,255,255,0.06);
+      border: 2px solid transparent;
+      border-radius: var(--btn-radius);
+      transition: all 150ms ease;
+      cursor: pointer;
+    }
+    .btn.primary { color: var(--accent); border-color: rgba(255,255,255,0.15); }
+    .btn.gear { min-width: 88px; font-size: 34px; }
+    .btn:focus {
+      outline: none;
+      border-color: var(--accent);
+      background: rgba(255,255,255,0.12);
+      box-shadow: 0 0 20px var(--accent);
+      transform: scale(1.04);
+    }
+    body[data-theme="fun"] .btn:focus { animation: bounce 500ms ease; }
+    @keyframes bounce { 0%,100%{transform:scale(1.04);} 40%{transform:scale(1.12);} }
+
+    /* ---- Settings screen ---- */
+    #settings h2 { font-size: 30px; color: var(--accent); margin-bottom: 4px; letter-spacing: 1px; }
+    .settingLabel { font-size: 18px; color: var(--dim); margin: 14px 0 8px; align-self: flex-start; }
+    .themeRow { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+    .btn.theme { min-width: 94px; min-height: 60px; font-size: 18px; padding: 0 10px; }
+    .btn.active { border-color: var(--accent2); color: var(--accent2); box-shadow: 0 0 14px var(--accent2); }
+    .btn.wide { width: 100%; }
+    #settings .btn.wide { min-height: 60px; font-size: 22px; }
+    #settings .settingLabel { margin: 10px 0 6px; }
+    #settings h2 { margin-bottom: 2px; }
+    /* color swatches */
+    .swatchRow { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+    .swatch {
+      width: 56px; height: 50px; min-height: 50px; min-width: 56px;
+      border-radius: 12px; border: 3px solid transparent; cursor: pointer;
+      transition: all 150ms ease; padding: 0;
+    }
+    .swatch:focus { outline: none; border-color: #ffffff; transform: scale(1.12); box-shadow: 0 0 16px currentColor; }
+    .swatch.active { border-color: #ffffff; box-shadow: 0 0 12px currentColor; }
+    .swatch.def { background: #111; color: #888; font-size: 14px; display:flex; align-items:center; justify-content:center; }
+  </style>
+</head>
+<body data-theme="minimal">
+
+  <canvas id="bgfx" width="600" height="600"></canvas>
+
+  <!-- ============ MAIN SCREEN ============ -->
+  <div id="main" class="screen">
+    <div id="clock">--:--:--</div>
+    <div id="date"></div>
+
+    <div id="swWrap">
+      <svg id="analog" viewBox="0 0 320 320" xmlns="http://www.w3.org/2000/svg"></svg>
+      <div id="stopwatch">00:00<span class="ms">.00</span></div>
+    </div>
+
+    <div id="laps"></div>
+
+    <div class="row">
+      <button id="startBtn" class="btn primary focusable" onclick="toggleRun()">▶ Start</button>
+      <button id="lapBtn" class="btn focusable" onclick="doLap()">⚑ Lap</button>
+      <button id="resetBtn" class="btn focusable" onclick="doReset()">↺ Reset</button>
+      <button class="btn gear focusable" onclick="showSettings()" title="Settings">⚙</button>
+    </div>
+  </div>
+
+  <!-- ============ SETTINGS SCREEN ============ -->
+  <div id="settings" class="screen hidden">
+    <h2>Settings</h2>
+
+    <div class="settingLabel">Design theme</div>
+    <div class="themeRow">
+      <button class="btn theme focusable" data-theme-btn="minimal" onclick="setTheme('minimal')">Minimal</button>
+      <button class="btn theme focusable" data-theme-btn="fun" onclick="setTheme('fun')">Fun 😄</button>
+      <button class="btn theme focusable" data-theme-btn="neon" onclick="setTheme('neon')">Neon</button>
+      <button class="btn theme focusable" data-theme-btn="retro" onclick="setTheme('retro')">Retro</button>
+      <button class="btn theme focusable" data-theme-btn="pocket" onclick="setTheme('pocket')">Pocket</button>
+    </div>
+
+    <div class="settingLabel">Accent color</div>
+    <div class="swatchRow">
+      <button class="swatch def focusable" data-color="" onclick="setAccent('')">Auto</button>
+      <button class="swatch focusable" data-color="#ffffff" style="background:#ffffff;color:#ffffff" onclick="setAccent('#ffffff')"></button>
+      <button class="swatch focusable" data-color="#00d4ff" style="background:#00d4ff;color:#00d4ff" onclick="setAccent('#00d4ff')"></button>
+      <button class="swatch focusable" data-color="#7CFC00" style="background:#7CFC00;color:#7CFC00" onclick="setAccent('#7CFC00')"></button>
+      <button class="swatch focusable" data-color="#ffd23f" style="background:#ffd23f;color:#ffd23f" onclick="setAccent('#ffd23f')"></button>
+      <button class="swatch focusable" data-color="#ff5da2" style="background:#ff5da2;color:#ff5da2" onclick="setAccent('#ff5da2')"></button>
+      <button class="swatch focusable" data-color="#b06bff" style="background:#b06bff;color:#b06bff" onclick="setAccent('#b06bff')"></button>
+      <button class="swatch focusable" data-color="#ff4d4d" style="background:#ff4d4d;color:#ff4d4d" onclick="setAccent('#ff4d4d')"></button>
+    </div>
+
+    <div class="settingLabel">Options</div>
+    <button id="fmtBtn" class="btn wide focusable" onclick="toggleClockFormat()">Clock: 24-hour</button>
+    <button id="msBtn" class="btn wide focusable" onclick="toggleHundredths()">Show hundredths: On</button>
+
+    <div style="height:14px"></div>
+    <button class="btn wide primary focusable" onclick="showMain()">← Back</button>
+  </div>
+
+  <script>
+    /* ================= Glasses D-pad navigation ================= */
+    const DPAD = { UP:'ArrowUp', DOWN:'ArrowDown', LEFT:'ArrowLeft', RIGHT:'ArrowRight', SELECT:'Enter', BACK:'Escape' };
+    function moveFocus(direction) {
+      var f = Array.from(document.querySelectorAll('.focusable:not([disabled]):not(.hidden)'))
+        .filter(function(el){ return el.offsetParent !== null; }); // only visible screen
+      if (!f.length) return;
+      var idx = f.indexOf(document.activeElement);
+      if (idx === -1) { f[0].focus(); return; }
+      var next = (direction === 'up' || direction === 'left')
+        ? (idx > 0 ? idx - 1 : f.length - 1)
+        : (idx < f.length - 1 ? idx + 1 : 0);
+      f[next].focus();
+    }
+    document.addEventListener('keydown', function(e) {
+      switch (e.key) {
+        case DPAD.UP:    moveFocus('up');    break;
+        case DPAD.DOWN:  moveFocus('down');  break;
+        case DPAD.LEFT:  moveFocus('left');  break;
+        case DPAD.RIGHT: moveFocus('right'); break;
+        case DPAD.SELECT:
+          var a = document.activeElement;
+          if (a && a.classList.contains('focusable')) a.click();
+          else moveFocus('down');            // nothing focused yet: grab the first item
+          break;
+        case DPAD.BACK:
+          if (!document.getElementById('settings').classList.contains('hidden')) showMain();
+          break;
+        default: return;
+      }
+      e.preventDefault();
+    });
+    // De-dupe: a focused <button> fires its own click on Enter AND we call click()
+    // above, so toggles ran twice and appeared to do nothing. Drop the 2nd click.
+    var _lastClick = { el: null, t: 0 };
+    document.addEventListener('click', function(e){
+      var el = e.target.closest ? e.target.closest('.focusable') : null;
+      if (!el) return;
+      var now = performance.now();
+      if (_lastClick.el === el && now - _lastClick.t < 300){
+        e.stopImmediatePropagation(); e.preventDefault(); return;
+      }
+      _lastClick.el = el; _lastClick.t = now;
+    }, true);
+
+    /* ================= Settings (persisted) ================= */
+    var use24 = load('use24', true);
+    var showMs = load('showMs', true);
+    function load(k, def){ var v = localStorage.getItem(k); return v === null ? def : v === 'true'; }
+    function save(k, v){ localStorage.setItem(k, v); }
+
+    var accentColor = localStorage.getItem('accent') || '';
+    function setTheme(name){
+      document.body.setAttribute('data-theme', name);
+      localStorage.setItem('theme', name);
+      document.querySelectorAll('[data-theme-btn]').forEach(function(b){
+        b.classList.toggle('active', b.getAttribute('data-theme-btn') === name);
+      });
+      applyAccent();
+      setFx(name);
+      if (typeof renderStopwatch === 'function') renderStopwatch();  // refresh analog hands/digits
+    }
+    function applyAccent(){
+      if (accentColor){
+        document.body.style.setProperty('--accent', accentColor);
+        document.body.style.setProperty('--accent2', accentColor);
+      } else {
+        document.body.style.removeProperty('--accent');
+        document.body.style.removeProperty('--accent2');
+      }
+      document.querySelectorAll('.swatch').forEach(function(s){
+        s.classList.toggle('active', s.getAttribute('data-color') === accentColor);
+      });
+    }
+    function setAccent(color){
+      accentColor = color;
+      localStorage.setItem('accent', color);
+      applyAccent();
+    }
+
+    /* ================= Background effects engine ================= */
+    /* One canvas, two moods:
+         neon -> a glowing line that grows, avoids the center, and regrows
+         fun  -> colorful falling sand that piles up then all drops away    */
+    var fxCanvas, fxCtx, fxMode = null, fxRun = false;
+    function setFx(theme){
+      if (!fxCanvas){ fxCanvas = document.getElementById('bgfx'); fxCtx = fxCanvas.getContext('2d'); }
+      fxMode = (theme === 'neon' || theme === 'fun') ? theme : null;
+      fxCtx.clearRect(0, 0, 600, 600);
+      if (fxMode === 'neon') initNeon();
+      else if (fxMode === 'fun') initSand();
+      if (fxMode && !fxRun){ fxRun = true; requestAnimationFrame(fxLoop); }
+      if (!fxMode) fxRun = false;
+    }
+    function fxLoop(){
+      if (!fxRun || !fxMode) return;
+      if (fxMode === 'neon') neonFrame();
+      else if (fxMode === 'fun') sandFrame();
+      requestAnimationFrame(fxLoop);
+    }
+
+    /* ---- Neon: abstract growing line ---- */
+    var nLines = [];
+    function initNeon(){ nLines = []; neonSpawn(); neonSpawn(); }
+    function neonSpawn(){
+      // A "spine" travels across the screen; the visible line rides a sine
+      // wave perpendicular to that travel, so it looks like a rolling wave.
+      var e = Math.floor(Math.random()*4), x, y, hd;
+      if (e===0){ x=Math.random()*600; y=20;  hd=Math.PI/2; }
+      else if (e===1){ x=Math.random()*600; y=580; hd=-Math.PI/2; }
+      else if (e===2){ x=20;  y=Math.random()*600; hd=0; }
+      else { x=580; y=Math.random()*600; hd=Math.PI; }
+      nLines.push({
+        cx:x, cy:y, hd:hd + (Math.random()-0.5)*0.5,
+        phase:Math.random()*6.28,
+        amp:24 + Math.random()*26,          // wave height
+        freq:0.15 + Math.random()*0.09,     // wave tightness
+        pts:[], state:'grow', maxLen:150 + Math.random()*130
+      });
+    }
+    function neonStep(L){
+      L.hd += (Math.random()-0.5)*0.05;                        // gentle drift in travel direction
+      if (L.cx>90 && L.cx<510 && L.cy>175 && L.cy<425){        // curve away from the clock zone
+        var target = Math.atan2(L.cy-300, L.cx-300);
+        var diff = Math.atan2(Math.sin(target-L.hd), Math.cos(target-L.hd));
+        L.hd += diff*0.12;
+      }
+      L.cx += Math.cos(L.hd)*2.6;
+      L.cy += Math.sin(L.hd)*2.6;
+      L.phase += L.freq;
+      var perp = L.hd + Math.PI/2;                             // offset sideways = the wave
+      var off = L.amp * Math.sin(L.phase);
+      L.pts.push({ x: L.cx + Math.cos(perp)*off, y: L.cy + Math.sin(perp)*off });
+      if (L.pts.length>L.maxLen || L.cx<6||L.cx>594||L.cy<6||L.cy>594) L.state='retract';
+    }
+    function neonDraw(L){
+      var p=L.pts; if (p.length<2) return;
+      fxCtx.lineCap='round'; fxCtx.lineJoin='round'; fxCtx.lineWidth=3;
+      fxCtx.shadowBlur=16; fxCtx.shadowColor='#00f0ff';
+      var g=fxCtx.createLinearGradient(p[0].x,p[0].y,p[p.length-1].x,p[p.length-1].y);
+      g.addColorStop(0,'#ff2ec4'); g.addColorStop(1,'#00f0ff'); fxCtx.strokeStyle=g;
+      fxCtx.beginPath(); fxCtx.moveTo(p[0].x,p[0].y);
+      for (var i=1;i<p.length;i++) fxCtx.lineTo(p[i].x,p[i].y);
+      fxCtx.stroke();
+    }
+    function neonFrame(){
+      fxCtx.clearRect(0,0,600,600); fxCtx.shadowBlur=0;
+      for (var i=nLines.length-1;i>=0;i--){
+        var L=nLines[i];
+        if (L.state==='grow'){ neonStep(L); if (L.state==='retract' && nLines.length<3) neonSpawn(); }
+        else { L.pts.splice(0,3); if (L.pts.length<2){ nLines.splice(i,1); continue; } }
+        neonDraw(L);
+      }
+      if (nLines.length<2) neonSpawn();
+    }
+
+    /* ---- Fun: colorful falling sand + drifting blobs ---- */
+    var COLS=60, ROWS=60, CELL=10, grid, sandState, blobs, fxT=0;
+    function initSand(){
+      grid = new Array(COLS*ROWS).fill(0);
+      sandState = 'fill';
+      // metaballs clustered tight in the 4 corners so the center stays black.
+      // each corner gets a coherent colour pair (mixing random hues turns muddy),
+      // and each blob slowly orbits its anchor so they drift and merge.
+      var corners = [
+        {x:110, y:110, hues:[330, 50]},    // pink + yellow
+        {x:490, y:110, hues:[190, 275]},   // cyan + purple
+        {x:110, y:490, hues:[50, 275]},    // yellow + purple
+        {x:490, y:490, hues:[330, 165]}    // pink + mint
+      ];
+      blobs = [];
+      for (var ci=0; ci<4; ci++){
+        var c = corners[ci];
+        for (var k=0; k<3; k++){
+          blobs.push({
+            ax: c.x + (Math.random()-0.5)*70,
+            ay: c.y + (Math.random()-0.5)*70,
+            phase: Math.random()*6.28,
+            speed: 0.008 + Math.random()*0.010,
+            orbit: 40 + Math.random()*40,
+            r: 130 + Math.random()*55,
+            hue: c.hues[k % 2] + (Math.random()-0.5)*20
+          });
+        }
+      }
+    }
+    function sandFull(){
+      var n=0; for (var i=0;i<grid.length;i++) if (grid[i]) n++;
+      return n > grid.length*0.46;
+    }
+    function sandEmpty(){ for (var i=0;i<grid.length;i++) if (grid[i]) return false; return true; }
+    function sandFall(){
+      for (var r=ROWS-2;r>=0;r--){
+        for (var c=0;c<COLS;c++){
+          var idx=r*COLS+c, v=grid[idx]; if (!v) continue;
+          if (!grid[idx+COLS]){ grid[idx+COLS]=v; grid[idx]=0; continue; }
+          var dir=Math.random()<0.5?-1:1, nc=c+dir;
+          if (nc>=0 && nc<COLS && !grid[(r+1)*COLS+nc]){ grid[(r+1)*COLS+nc]=v; grid[idx]=0; continue; }
+          nc=c-dir;
+          if (nc>=0 && nc<COLS && !grid[(r+1)*COLS+nc]){ grid[(r+1)*COLS+nc]=v; grid[idx]=0; }
+        }
+      }
+    }
+    function sandCollapse(){                                   // shift everything down; pile drains away
+      for (var r=ROWS-1;r>=0;r--)
+        for (var c=0;c<COLS;c++)
+          grid[r*COLS+c] = (r-3>=0) ? grid[(r-3)*COLS+c] : 0;
+    }
+    function sandFrame(){
+      fxCtx.clearRect(0,0,600,600);
+      // drifting soft blobs ("abstract meta balls")
+      fxT++;
+      fxCtx.globalCompositeOperation='lighter';   // colors add + glow where blobs overlap = gooey merge
+      for (var b of blobs){
+        var x = b.ax + Math.cos(fxT*b.speed + b.phase) * b.orbit;
+        var y = b.ay + Math.sin(fxT*b.speed*1.3 + b.phase) * b.orbit;
+        var rg=fxCtx.createRadialGradient(x,y,0,x,y,b.r);
+        rg.addColorStop(0,   'hsla('+b.hue+',95%,63%,0.55)');
+        rg.addColorStop(0.55,'hsla('+b.hue+',95%,60%,0.20)');
+        rg.addColorStop(1,   'hsla('+b.hue+',95%,60%,0)');
+        fxCtx.fillStyle=rg; fxCtx.beginPath(); fxCtx.arc(x,y,b.r,0,7); fxCtx.fill();
+        b.hue=(b.hue+0.15)%360;
+      }
+      fxCtx.globalCompositeOperation='source-over';
+      // sand
+      if (sandState==='collapse'){ sandCollapse(); if (sandEmpty()) sandState='fill'; }
+      else {
+        for (var s=0;s<4;s++){ var col=Math.floor(Math.random()*COLS); if (!grid[col]) grid[col]=1+Math.floor(Math.random()*360); }
+        sandFall();
+        if (sandFull()) sandState='collapse';
+      }
+      for (var r=0;r<ROWS;r++){
+        for (var c=0;c<COLS;c++){
+          var v=grid[r*COLS+c];
+          if (v){ fxCtx.fillStyle='hsl('+v+',90%,58%)'; fxCtx.fillRect(c*CELL,r*CELL,CELL,CELL); }
+        }
+      }
+    }
+    function toggleClockFormat(){
+      use24 = !use24; save('use24', use24);
+      document.getElementById('fmtBtn').textContent = 'Clock: ' + (use24 ? '24-hour' : '12-hour');
+    }
+    function toggleHundredths(){
+      showMs = !showMs; save('showMs', showMs);
+      document.getElementById('msBtn').textContent = 'Show hundredths: ' + (showMs ? 'On' : 'Off');
+      renderStopwatch();
+    }
+
+    /* ================= Screen switching ================= */
+    function showSettings(){
+      document.getElementById('main').classList.add('hidden');
+      document.getElementById('settings').classList.remove('hidden');
+      document.querySelector('[data-theme-btn].active, [data-theme-btn]').focus();
+    }
+    function showMain(){
+      document.getElementById('settings').classList.add('hidden');
+      document.getElementById('main').classList.remove('hidden');
+      document.getElementById('startBtn').focus();
+    }
+
+    /* ================= Live clock ================= */
+    function pad(n){ return (n < 10 ? '0' : '') + n; }
+    function tickClock(){
+      var d = new Date();
+      var h = d.getHours(), m = d.getMinutes(), s = d.getSeconds();
+      var suffix = '';
+      if (!use24){ suffix = h >= 12 ? ' PM' : ' AM'; h = h % 12; if (h === 0) h = 12; }
+      document.getElementById('clock').innerHTML =
+        pad(h) + '<span class="colon">:</span>' + pad(m) + '<span class="colon">:</span>' + pad(s) + suffix;
+      var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+      var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      document.getElementById('date').textContent = days[d.getDay()] + ', ' + months[d.getMonth()] + ' ' + d.getDate();
+    }
+    setInterval(tickClock, 250);
+
+    /* ================= Stopwatch ================= */
+    var running = false, startTime = 0, elapsed = 0, lapCount = 0, lastLap = 0, rafId = null;
+
+    function fmt(ms){
+      var totalCs = Math.floor(ms / 10);          // centiseconds
+      var cs = totalCs % 100;
+      var totalSec = Math.floor(totalCs / 100);
+      var s = totalSec % 60;
+      var totalMin = Math.floor(totalSec / 60);
+      var mm = totalMin % 60;
+      var hh = Math.floor(totalMin / 60);
+      var main = (hh > 0 ? pad(hh) + ':' : '') + pad(mm) + ':' + pad(s);
+      return { main: main, cs: pad(cs) };
+    }
+    function renderStopwatch(){
+      var now = running ? elapsed + (performance.now() - startTime) : elapsed;
+      var t = fmt(now);
+      document.getElementById('stopwatch').innerHTML =
+        '<span class="main">' + t.main + '</span>' + (showMs ? '<span class="ms">.' + t.cs + '</span>' : '');
+      if (document.body.getAttribute('data-theme') === 'pocket') updateAnalog(now, t);
+    }
+    function loop(){ renderStopwatch(); if (running) rafId = requestAnimationFrame(loop); }
+
+    function toggleRun(){
+      running = !running;
+      var btn = document.getElementById('startBtn');
+      if (running){
+        startTime = performance.now();
+        document.body.classList.add('running');
+        btn.textContent = '⏸ Stop';
+        loop();
+      } else {
+        elapsed += performance.now() - startTime;
+        document.body.classList.remove('running');
+        btn.textContent = '▶ Start';
+        cancelAnimationFrame(rafId);
+        renderStopwatch();
+      }
+    }
+    function doLap(){
+      var now = running ? elapsed + (performance.now() - startTime) : elapsed;
+      if (now === 0) return;
+      lapCount++;
+      var split = now - lastLap; lastLap = now;
+      var t = fmt(split), total = fmt(now);
+      var el = document.createElement('div');
+      el.className = 'lap';
+      el.innerHTML = '<span>Lap ' + lapCount + '</span><span><b>' + t.main + '.' + t.cs + '</b>  ' + total.main + '</span>';
+      var laps = document.getElementById('laps');
+      laps.insertBefore(el, laps.firstChild);
+      while (laps.children.length > 4) laps.removeChild(laps.lastChild);
+    }
+    function doReset(){
+      running = false;
+      cancelAnimationFrame(rafId);
+      document.body.classList.remove('running');
+      elapsed = 0; lastLap = 0; lapCount = 0;
+      document.getElementById('startBtn').textContent = '▶ Start';
+      document.getElementById('laps').innerHTML = '';
+      renderStopwatch();
+    }
+
+    /* ================= Analog dial (Pocket theme) ================= */
+    var SVGNS = 'http://www.w3.org/2000/svg', secHand, subHand, digText;
+    function svgEl(tag, attrs){
+      var e = document.createElementNS(SVGNS, tag);
+      for (var k in attrs) e.setAttribute(k, attrs[k]);
+      return e;
+    }
+    function buildAnalog(){
+      var svg = document.getElementById('analog'), cx = 160, cy = 160;
+      svg.appendChild(svgEl('circle', {cx:cx, cy:cy, r:150, fill:'none', stroke:'var(--accent)', 'stroke-width':4}));
+      for (var i=0;i<60;i++){                                   // 60 ticks, bold every 5th
+        var a = i/60*Math.PI*2 - Math.PI/2, major = i%5===0, r1 = major?124:132;
+        svg.appendChild(svgEl('line', {
+          x1:cx+Math.cos(a)*r1, y1:cy+Math.sin(a)*r1,
+          x2:cx+Math.cos(a)*145, y2:cy+Math.sin(a)*145,
+          stroke: major?'var(--accent)':'var(--dim)', 'stroke-width': major?3:1
+        }));
+      }
+      for (var n=1;n<=12;n++){                                  // numbers 5..60
+        var av = n/12*Math.PI*2 - Math.PI/2;
+        var t = svgEl('text', {x:cx+Math.cos(av)*106, y:cy+Math.sin(av)*106+7, 'text-anchor':'middle', fill:'var(--fg)', 'font-size':20, 'font-family':'Georgia, serif'});
+        t.textContent = n*5; svg.appendChild(t);
+      }
+      var sx=160, sy=110;                                       // minutes subdial
+      svg.appendChild(svgEl('circle', {cx:sx, cy:sy, r:33, fill:'none', stroke:'var(--dim)', 'stroke-width':2}));
+      for (var m=1;m<=6;m++){
+        var am = m/6*Math.PI*2 - Math.PI/2;
+        var tm = svgEl('text', {x:sx+Math.cos(am)*23, y:sy+Math.sin(am)*23+4, 'text-anchor':'middle', fill:'var(--dim)', 'font-size':10, 'font-family':'Georgia, serif'});
+        tm.textContent = ('0'+(m*5)).slice(-2); svg.appendChild(tm);
+      }
+      subHand = svgEl('line', {x1:sx, y1:sy, x2:sx, y2:sy-27, stroke:'var(--accent2)', 'stroke-width':2, 'stroke-linecap':'round'});
+      svg.appendChild(subHand);
+      svg.appendChild(svgEl('circle', {cx:sx, cy:sy, r:3, fill:'var(--accent)'}));
+      digText = svgEl('text', {x:cx, y:cy+66, 'text-anchor':'middle', fill:'var(--fg)', 'font-size':28, 'font-family':'Georgia, serif'});
+      digText.textContent = '00:00.00'; svg.appendChild(digText);
+      secHand = svgEl('line', {x1:cx, y1:cy+28, x2:cx, y2:cy-128, stroke:'#ff7a1a', 'stroke-width':3, 'stroke-linecap':'round'});
+      svg.appendChild(secHand);
+      svg.appendChild(svgEl('circle', {cx:cx, cy:cy, r:6, fill:'var(--accent)'}));
+    }
+    function updateAnalog(now, t){
+      if (!secHand) return;
+      var totalSec = now/1000;
+      secHand.setAttribute('transform', 'rotate(' + ((totalSec%60)/60*360) + ' 160 160)');
+      subHand.setAttribute('transform', 'rotate(' + (((totalSec/60)%30)/30*360) + ' 160 110)');
+      digText.textContent = t.main + '.' + t.cs;
+    }
+
+    /* ================= Init ================= */
+    buildAnalog();
+    tickClock();
+    setTheme(localStorage.getItem('theme') || 'minimal');
+    document.getElementById('fmtBtn').textContent = 'Clock: ' + (use24 ? '24-hour' : '12-hour');
+    document.getElementById('msBtn').textContent = 'Show hundredths: ' + (showMs ? 'On' : 'Off');
+    renderStopwatch();
+    window.addEventListener('DOMContentLoaded', function(){ document.getElementById('startBtn').focus(); });
+    document.getElementById('startBtn').focus();
+  </script>
+</body>
+</html>
