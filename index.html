@@ -7,7 +7,9 @@
   <!-- Identify your web app as MRBD-compatible -->
   <meta name="mrbd-web-app-capable" content="yes">
   <meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no">
-  <link rel="icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==">
+  <link rel="icon" type="image/png" href="icon.png" sizes="512x512">
+  <link rel="apple-touch-icon" href="icon.png" sizes="180x180">
+  <link rel="manifest" href="manifest.webmanifest">
   <title>Stopwatch</title>
   <style>
     /* ---- Base (glasses require: 600x600, no scroll, black = transparent) ---- */
@@ -306,16 +308,33 @@
   <script>
     /* ================= Glasses D-pad navigation ================= */
     const DPAD = { UP:'ArrowUp', DOWN:'ArrowDown', LEFT:'ArrowLeft', RIGHT:'ArrowRight', SELECT:'Enter', BACK:'Escape' };
+    // Spatial focus: pick the nearest focusable in the swiped direction by its
+    // on-screen position. This way "down" jumps row-to-row (e.g. straight past a
+    // whole row of colour swatches) instead of crawling one item at a time.
     function moveFocus(direction) {
       var f = Array.from(document.querySelectorAll('.focusable:not([disabled]):not(.hidden)'))
-        .filter(function(el){ return el.offsetParent !== null; }); // only visible screen
+        .filter(function(el){ return el.offsetParent !== null; });
       if (!f.length) return;
-      var idx = f.indexOf(document.activeElement);
-      if (idx === -1) { f[0].focus(); return; }
-      var next = (direction === 'up' || direction === 'left')
-        ? (idx > 0 ? idx - 1 : f.length - 1)
-        : (idx < f.length - 1 ? idx + 1 : 0);
-      f[next].focus();
+      var cur = document.activeElement;
+      if (f.indexOf(cur) === -1) { f[0].focus(); return; }
+      var r = cur.getBoundingClientRect(), cx = r.left+r.width/2, cy = r.top+r.height/2;
+      var best = null, bestScore = Infinity;
+      f.forEach(function(el){
+        if (el === cur) return;
+        var b = el.getBoundingClientRect(), ex = b.left+b.width/2, ey = b.top+b.height/2;
+        var dx = ex-cx, dy = ey-cy, ok, along, off;
+        if (direction === 'down')      { ok = dy > 4;  along = dy;  off = Math.abs(dx); }
+        else if (direction === 'up')   { ok = dy < -4; along = -dy; off = Math.abs(dx); }
+        else if (direction === 'right'){ ok = dx > 4;  along = dx;  off = Math.abs(dy); }
+        else                           { ok = dx < -4; along = -dx; off = Math.abs(dy); }
+        if (!ok) return;
+        var score = along + off*2;              // prefer close in-direction and well-aligned
+        if (score < bestScore) { bestScore = score; best = el; }
+      });
+      if (best) { best.focus(); return; }
+      // nothing that way: wrap around in document order so you never get stuck
+      var idx = f.indexOf(cur);
+      f[(direction==='down'||direction==='right') ? (idx+1)%f.length : (idx-1+f.length)%f.length].focus();
     }
     document.addEventListener('keydown', function(e) {
       switch (e.key) {
@@ -349,7 +368,7 @@
     }, true);
 
     /* ================= Settings (persisted) ================= */
-    var use24 = load('use24', true);
+    var use24 = load('use24', false);   // default to 12-hour clock
     var showMs = load('showMs', true);
     function load(k, def){ var v = localStorage.getItem(k); return v === null ? def : v === 'true'; }
     function save(k, v){ localStorage.setItem(k, v); }
